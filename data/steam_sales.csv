@@ -1,4 +1,4 @@
-Game Name,Rating,#Reviews,Discount%,Price (€),Original Price (€),Release Date,Windows,Linux,MacOS,Fetched At
+name,Rating,#Reviews,Discount%,Price (€),Original Price (€),Release Date,Windows,Linux,MacOS,Fetched At
 PEAK,7.0,"77,683",-38.0,4.64,7.49,"16 Jun, 2025",1,0,0,2025-08-11 00:00
 Cyberpunk 2077,7.0,"772,574",-65.0,20.99,59.99,"9 Dec, 2020",1,0,1,2025-08-11 00:00
 Rust,7.0,"1,038,433",-50.0,19.99,39.99,"8 Feb, 2018",1,0,1,2025-08-11 00:00
