@@ -18,8 +18,9 @@ class PriceHistoryScraper:
         self.url = f"https://steambase.io/games/{app_id}/price?cc={cc}"
 
     async def get_price_history_table(self) -> pd.DataFrame:
-        """Scrape the price history table for a specific Steam game."""
+        """Scrape price history + all publishers in one column."""
         all_data = []
+        publisher = None
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -33,7 +34,6 @@ class PriceHistoryScraper:
                     print(f"Loading {self.url} (attempt {attempt}/{MAX_RETRIES})")
                     await page.goto(self.url, wait_until="domcontentloaded", timeout=PLAYWRIGHT_TIMEOUT)
 
-                    # Check for 404 message
                     if "404: Not Found" in (await page.content()):
                         print("404 Not Found — skipping this app.")
                         await browser.close()
@@ -41,6 +41,27 @@ class PriceHistoryScraper:
 
                     await self._remove_cookie_banner(page)
 
+                    # ✅ Scrape all publishers (merged cleanly)
+                    try:
+                        tr = page.locator("tr:has(td:text('Publisher'))")
+                        pub_links = tr.locator("a")
+                        count = await pub_links.count()
+
+                        if count > 0:
+                            publishers = []
+                            for i in range(count):
+                                name = (await pub_links.nth(i).inner_text()).strip().strip(",")
+                                if name:
+                                    publishers.append(name)
+                            # объединяем всех, удаляем дубликаты
+                            publishers = list(dict.fromkeys(publishers))
+                            publisher = ", ".join(publishers)
+                        else:
+                            publisher = None
+                    except Exception:
+                        publisher = None
+
+                    # ✅ Scrape price table
                     try:
                         await page.wait_for_selector("table tbody tr", timeout=15000)
                     except PlaywrightTimeoutError:
@@ -70,13 +91,15 @@ class PriceHistoryScraper:
                 print(f"Retrying in {wait_time:.1f}s...")
                 time.sleep(wait_time)
 
-        return pd.DataFrame(
+        df = pd.DataFrame(
             all_data,
             columns=["month", "base_price", "lowest_price", "price_changes", "days_on_sale"]
         )
 
+        df["publisher"] = publisher
+        return df
+
     async def _remove_cookie_banner(self, page):
-        """Remove the cookie consent banner if visible."""
         try:
             while await page.locator("#cmpwrapper").is_visible():
                 await page.evaluate("document.getElementById('cmpwrapper').remove()")
