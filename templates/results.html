@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Game Predictor — Results</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1.5em;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 0 12px rgba(0,0,0,0.1);
+    }
+    th, td {
+      padding: 12px 16px;
+      text-align: left;
+    }
+    th {
+      background-color: #222;
+      color: #fff;
+    }
+    tr:nth-child(even) {
+      background-color: #f8f8f8;
+    }
+    tr:hover {
+      background-color: #e6f0ff;
+    }
+    .discount {
+      font-weight: bold;
+      color: #0077cc;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>📈 Prediction Results</h1>
+
+    <section class="summary">
+      <h2>Game</h2>
+      <pre class="input-box">{{ original_input }}</pre>
+    </section>
+
+    <section class="predictions">
+      <h2>Predicted Discounts (Next 12 Months)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th>Expected Discount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in predictions %}
+          <tr>
+            <td>{{ p.month_year }}</td>
+            <td class="discount">{{ p.price }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <div class="actions" style="margin-top: 2em;">
+      <a href="{{ url_for('index') }}" class="btn btn-secondary">← Back</a>
+    </div>
+
+    <footer class="small">Predictions are model-based and may vary from real Steam discounts.</footer>
+  </main>
+</body>
+</html>

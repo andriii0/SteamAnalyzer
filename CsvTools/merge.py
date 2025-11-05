@@ -2,7 +2,7 @@ import pandas as pd
 from dateutil import parser
 
 prices = pd.read_csv("data/steam_prices_prepared.csv")
-sales = pd.read_csv("data/steam_sales.csv")
+sales = pd.read_csv("../data/steam_sales.csv")
 
 sales = sales.rename(columns={
     "name": "game_name",

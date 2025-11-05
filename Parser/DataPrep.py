@@ -8,7 +8,7 @@ from PriceHistoryScraper import PriceHistoryScraper
 from ReviewHistoryScraper import ReviewHistoryScraper
 from GameIdSearch import GameIdSearch
 
-INPUT_FILE = Path("data/steam_sales.csv")
+INPUT_FILE = Path("../data/steam_sales.csv")
 OUTPUT_FILE = Path("data/steam_prices_prepared.csv")
 LOG_FILE = Path("scraper_log.txt")
 

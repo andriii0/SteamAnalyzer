@@ -60,7 +60,9 @@ class ReviewHistoryScraper:
 
                         data = [(await col.inner_text()).strip() for col in cols[:6]]
                         all_data.append(data)
-
+                        print("🔍 Parsed review rows sample:")
+                        for d in all_data[:3]:
+                            print(d)
                     await browser.close()
                     break
 

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Game Predictor — Input</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>
+    function showLoader() {
+      document.getElementById("loader-overlay").style.display = "flex";
+    }
+  </script>
+</head>
+<body>
+  <main class="container">
+    <h1>🎮 Game Discount Predictor</h1>
+    <p>Enter a single game title to see the predicted discounts for the next 12 months.</p>
+
+    <form action="{{ url_for('predict') }}" method="post" class="form" onsubmit="showLoader()">
+      <label for="games" class="label">Game Title</label>
+      <input id="games" name="games" type="text" placeholder="Example: Stardew Valley" required>
+
+      <div class="form-row">
+        <button type="submit" class="btn-gradient">
+          🔮 Predict
+        </button>
+      </div>
+    </form>
+
+    <footer class="small">Powered by Steam data and XGBoost model</footer>
+  </main>
+
+  <div id="loader-overlay">
+    <div class="loader"></div>
+    <p>Analyzing data and predicting future discounts...</p>
+  </div>
+</body>
+</html>
