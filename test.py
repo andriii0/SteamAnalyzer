@@ -4,7 +4,6 @@ import numpy as np
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-# === Load model and feature list ===
 MODEL_PATH = "xgbModel6500rows/xgb_model.pkl"
 FEATURES_PATH = "xgbModel6500rows/xgb_features.pkl"
 
@@ -14,8 +13,6 @@ xgb_features = joblib.load(FEATURES_PATH)
 print("✅ Model loaded:", MODEL_PATH)
 print("✅ Feature count:", len(xgb_features))
 
-# === Define baseline feature vector for Cyberpunk 2077 ===
-# Используем данные из последней строки CSV (2025-10-01)
 release_date = datetime(2020, 12, 9)
 current_month = datetime(2025, 10, 1)
 
@@ -33,14 +30,12 @@ base_features = {
 }
 
 print (base_features)
-# === Create dataframe with all model columns ===
 X_base = pd.DataFrame([base_features])
 missing_cols = [col for col in xgb_features if col not in X_base.columns]
 for c in missing_cols:
     X_base[c] = 0
 X_base = X_base[xgb_features]
 
-# === Predict for the next 12 months ===
 results = []
 current_date = datetime.now()
 
@@ -54,7 +49,6 @@ for i in range(12):
         "predicted_discount": round(pred, 2)
     })
 
-# === Print results ===
 print("\n📊 Predicted discount for 'Cyberpunk 2077' for the next 12 months:\n")
 for r in results:
     print(f"{r['month']:<20} {r['predicted_discount']}% expected discount")

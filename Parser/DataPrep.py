@@ -4,18 +4,39 @@ import argparse
 import re
 from pathlib import Path
 
-from PriceHistoryScraper import PriceHistoryScraper
-from ReviewHistoryScraper import ReviewHistoryScraper
-from GameIdSearch import GameIdSearch
+from Parser.priceHistoryScraper import PriceHistoryScraper
+from Parser.reviewHistoryScraper import ReviewHistoryScraper
+from Parser.gameIdSearcher import GameIdSearch
+
+#from priceHistoryScraper import PriceHistoryScraper
+#from reviewHistoryScraper import ReviewHistoryScraper
+#from gameIdSearcher import GameIdSearch
 
 INPUT_FILE = Path("../data/steam_sales.csv")
-OUTPUT_FILE = Path("data/steam_prices_prepared.csv")
+OUTPUT_FILE = Path("../data/steam_prices_prepared.csv")
 LOG_FILE = Path("scraper_log.txt")
 
 
+def parse_month_to_datetime(s):
+    """Parse month with English or Russian formats."""
+    if pd.isna(s):
+        return pd.NaT
+    s = str(s).strip()
+    s = re.sub(r"[,\u00A0]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\bг\.?$", "", s, flags=re.IGNORECASE).strip()
+    months = {
+        "январь": "January", "февраль": "February", "март": "March", "апрель": "April",
+        "май": "May", "июнь": "June", "июль": "July", "август": "August",
+        "сентябрь": "September", "октябрь": "October", "ноябрь": "November", "декабрь": "December"
+    }
+    for ru, en in months.items():
+        s = re.sub(rf"{ru}", en, s, flags=re.IGNORECASE)
+    return pd.to_datetime(s, errors="coerce")
+
+
 async def process_game(game_name: str, release_date: str | None, done_app_ids: set[str], cc="us", require_reviews: bool = False) -> pd.DataFrame:
-    """Parse one game: get AppID, then price + review history.
-    If require_reviews=True then rows without review data will be removed (useful for preorders)."""
+    """Parse one game: get AppID, then price + review history."""
     try:
         print(f"\n[>] Processing game: {game_name}")
         app_id = await GameIdSearch.get_app_id(game_name)
@@ -26,18 +47,11 @@ async def process_game(game_name: str, release_date: str | None, done_app_ids: s
             print(f"[=] Skipped (already processed): {game_name}")
             return pd.DataFrame()
 
-        # --- Normalize release_date ---
-        if release_date and isinstance(release_date, str):
-            try:
-                release_date = pd.to_datetime(release_date, errors="coerce").date()
-            except Exception:
-                release_date = None
-
         # --- PRICE HISTORY ---
         price_scraper = PriceHistoryScraper(app_id, cc=cc)
         df_price = await price_scraper.get_price_history_table()
+        release_date = df_price['release_date'].iloc[0] if not df_price.empty else None
 
-        # Filter out invalid or empty rows
         if df_price is None or df_price.empty:
             print(f"[!] No price data for {game_name}")
             df_price = pd.DataFrame()
@@ -56,29 +70,11 @@ async def process_game(game_name: str, release_date: str | None, done_app_ids: s
         review_scraper = ReviewHistoryScraper(app_id, cc=cc)
         df_reviews = await review_scraper.get_review_history_table()
 
-        # Handle empty case
         if (df_price.empty and (df_reviews is None or df_reviews.empty)):
             print(f"[!] No price or review data for {game_name}")
             return pd.DataFrame()
 
-        # --- Normalize month strings ---
-        def parse_month_to_datetime(s):
-            """Parse month with English or Russian formats."""
-            if pd.isna(s):
-                return pd.NaT
-            s = str(s).strip()
-            s = re.sub(r"[,\u00A0]", " ", s)
-            s = re.sub(r"\s+", " ", s).strip()
-            s = re.sub(r"\bг\.?$", "", s, flags=re.IGNORECASE).strip()
-            months = {
-                "январь": "January", "февраль": "February", "март": "March", "апрель": "April",
-                "май": "May", "июнь": "June", "июль": "July", "август": "August",
-                "сентябрь": "September", "октябрь": "October", "ноябрь": "November", "декабрь": "December"
-            }
-            for ru, en in months.items():
-                s = re.sub(rf"{ru}", en, s, flags=re.IGNORECASE)
-            return pd.to_datetime(s, errors="coerce")
-
+        # Normalize months
         if not df_price.empty:
             df_price["month"] = df_price["month"].apply(parse_month_to_datetime)
             df_price["month"] = df_price["month"].dt.date
@@ -89,7 +85,7 @@ async def process_game(game_name: str, release_date: str | None, done_app_ids: s
             df_reviews["month"] = df_reviews["month"].dt.date
             df_reviews = df_reviews[df_reviews["month"].notna()].copy()
 
-        # --- Cleanup price columns ---
+        # Cleanup price columns
         if not df_price.empty:
             for col in ["base_price", "lowest_price"]:
                 df_price[col] = (
@@ -113,13 +109,12 @@ async def process_game(game_name: str, release_date: str | None, done_app_ids: s
             df_price["game_name"] = game_name
             df_price["release_date"] = release_date
 
-        # --- Cleanup reviews columns and drop rows with zero reviews ---
+        # Cleanup reviews columns and drop rows with zero reviews
         if df_reviews is not None and not df_reviews.empty:
             df_reviews["app_id"] = app_id
             df_reviews["game_name"] = game_name
             df_reviews["release_date"] = release_date
 
-            # Если есть колонка total_reviews — очистим её и уберём строки с 0 отзывов
             if "total_reviews" in df_reviews.columns:
                 df_reviews["total_reviews"] = (
                     df_reviews["total_reviews"]
@@ -133,13 +128,10 @@ async def process_game(game_name: str, release_date: str | None, done_app_ids: s
                 after = len(df_reviews)
                 print(f"[~] Dropped {before - after} rows with no reviews for {game_name}")
             else:
-                # нет метрики total_reviews — не дропаем ничего здесь, но заметим
                 print("[~] 'total_reviews' column missing in reviews table — skipping zero-review drop.")
 
         # --- Merge by month ---
         if not df_price.empty and df_reviews is not None and not df_reviews.empty:
-            # Ключевая смена: если у нас есть данные ревью — используем inner join,
-            # чтобы отбросить месяцы с ценами, но без ревью.
             df = pd.merge(
                 df_price,
                 df_reviews,
@@ -148,7 +140,6 @@ async def process_game(game_name: str, release_date: str | None, done_app_ids: s
                 suffixes=("_price", "_review")
             )
         elif not df_price.empty and (df_reviews is None or df_reviews.empty):
-            # Нет ревью — оставляем только цены (если явно не требуется наличие ревью)
             if require_reviews:
                 print(f"[!] Reviews required but none found for {game_name}; skipping.")
                 return pd.DataFrame()
@@ -177,7 +168,7 @@ async def process_game(game_name: str, release_date: str | None, done_app_ids: s
         print(f"[!] Error while processing {game_name}: {e}")
         return pd.DataFrame()
 
-# --- POSTPROCESSING CLEANUP ---
+
 def clean_prepared_csv(file_path: Path):
     print("\n[~] Starting post-processing cleanup...")
 
@@ -188,7 +179,6 @@ def clean_prepared_csv(file_path: Path):
     df = pd.read_csv(file_path)
 
     df = df.applymap(lambda x: x.replace("\xa0", "").replace("&nbsp;", "") if isinstance(x, str) else x)
-
     df = df.applymap(lambda x: x.replace(",", "") if isinstance(x, str) else x)
 
     for col in ["positive", "negative", "total_reviews"]:
@@ -197,6 +187,7 @@ def clean_prepared_csv(file_path: Path):
 
     df.to_csv(file_path, index=False, encoding="utf-8-sig")
     print(f"[✓] Cleanup complete. File saved: {file_path}\n")
+
 
 async def main(start: int, end: int):
     if not INPUT_FILE.exists():
@@ -262,11 +253,13 @@ async def main(start: int, end: int):
 
     if not df_existing.empty:
         df_existing.to_csv(OUTPUT_FILE, index=False)
-        clean_prepared_csv(OUTPUT_FILE) #cleans nbsp and reviews commas
+        clean_prepared_csv(OUTPUT_FILE)
         print(f"\n[✓] Final file saved: {OUTPUT_FILE}")
     else:
         print("[!] Nothing collected!")
 
+async def get_game_data(game_name: str) -> pd.DataFrame:
+    return await process_game(game_name, None, set())
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Steam price + review history data prep")
