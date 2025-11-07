@@ -415,6 +415,8 @@ def _prepare_features(df: pd.DataFrame) -> pd.DataFrame:
                     f"[!] Publisher '{publisher_value}' (normalized '{normalized}') was not found in model features",
                 )
 
+    features_df.attrs["processed_source"] = df
+
     return features_df
 
 

@@ -54,19 +54,51 @@ def predict():
             flash(f"No data found for '{game_name}'.")
             return redirect(url_for("index"))
 
-        # === Prepare features ===
-        X_base = df  # Use the already prepared DataFrame as is (no further manipulation)
+        source_frame = df.attrs.get("processed_source")
+
+        latest_idx = None
+        if source_frame is not None and not source_frame.empty:
+            if "month" in source_frame.columns:
+                valid_months = source_frame["month"].dropna()
+                if not valid_months.empty:
+                    latest_idx = valid_months.idxmax()
+            if latest_idx is None:
+                latest_idx = source_frame.index[-1]
+        else:
+            latest_idx = df.index[-1]
+
+        X_base = df.loc[[latest_idx]].copy()
+
+        release_date_value = None
+        if source_frame is not None and not source_frame.empty and "release_date" in source_frame.columns:
+            release_val = source_frame.loc[latest_idx, "release_date"]
+            if release_val is not None:
+                if hasattr(release_val, "to_pydatetime"):
+                    release_date_value = release_val.to_pydatetime().date()
+                elif isinstance(release_val, datetime):
+                    release_date_value = release_val.date()
+                else:
+                    try:
+                        release_date_value = datetime.fromisoformat(str(release_val)).date()
+                    except ValueError:
+                        release_date_value = None
+
+        X_base = X_base[xgb_model_features]
 
         # === Predict 12 months ahead ===
         predictions = []
-        current_date = datetime.now()
+        current_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
         for i in range(12):
             future_date = current_date + relativedelta(months=i)
             X = X_base.copy()
-            X["month_num"] = future_date.month
+            idx = X.index[0]
+            X.at[idx, "month_num"] = future_date.month
 
-            # Prediction using the model
+            if release_date_value is not None and "days_since_release" in X.columns:
+                days_delta = (future_date.date() - release_date_value).days
+                X.at[idx, "days_since_release"] = days_delta
+
             pred_value = float(xgb_model.predict(X)[0])
 
             predictions.append({
