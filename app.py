@@ -3,9 +3,8 @@ import os
 import joblib
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash
-from Parser.gameIdSearcher import GameIdSearch
 from dateutil.relativedelta import relativedelta
-from Parser.DataPrep import get_game_data
+import pandas as pd
 
 # === Load pretrained XGBoost model ===
 MODEL_PATH = "xgbModel6500rows/xgb_model.pkl"
@@ -20,10 +19,53 @@ xgb_model = joblib.load(MODEL_PATH)
 xgb_model_features = joblib.load(FEATURES_PATH)
 print("✅ Loaded model and feature list:", MODEL_PATH)
 
-
 # === Flask app ===
 app = Flask(__name__)
 app.secret_key = "supersecretkey"  # required for flash messages
+
+
+# Function to generate fake data for the games
+def get_fake_data(game_name):
+    if game_name == "PEAK":
+        return {
+            "days_since_release": 150,  # Fake number of days since release
+            "days_on_sale": 1,
+            "price_changes": 1,
+            "positive_ratio": 152949 / (152949 + 10228),
+            "negative_ratio": 10228 / (152949 + 10228),
+            "total_reviews": 163177,
+            "base_price": 7.99,
+            "review_change_percent": -0.01,
+            "month_num": 10,  # October
+            "publisher_Landfall Aggro Crab": 1.0,
+        }
+    elif game_name == "Rust":
+        return {
+            "days_since_release": 2720,  # Fake number of days since release
+            "days_on_sale": 4,
+            "price_changes": 1,
+            "positive_ratio": 1105109 / (1105109 + 164409),
+            "negative_ratio": 164409 / (1105109 + 164409),
+            "total_reviews": 1269518,
+            "base_price": 39.99,
+            "review_change_percent": -0.07,
+            "month_num": 10,  # October
+            "publisher_Facepunch Studios": 1.0,
+        }
+    elif game_name == "Cyberpunk 2077":
+        return {
+            "days_since_release": 1800,
+            "days_on_sale": 3,
+            "price_changes": 1,
+            "positive_ratio": 757762 / (757762 + 126765),
+            "negative_ratio": 126765 / (757762 + 126765),
+            "total_reviews": 884527,
+            "base_price": 59.99,
+            "review_change_percent": 0.11,
+            "month_num": 10,
+            "publisher_CD PROJEKT RED": 1.0,
+        }
+    return None
 
 
 @app.route("/", methods=["GET"])
@@ -39,39 +81,39 @@ def predict():
         return redirect(url_for("index"))
 
     try:
-        # === Get Steam App ID ===
-        app_id = asyncio.run(GameIdSearch.get_app_id(game_name))
-        if not app_id:
-            flash(f"Could not find Steam app ID for '{game_name}'.")
+        # === Get fake data for each game ===
+        base_features = get_fake_data(game_name)
+
+        if base_features is None:
+            flash(f"Game '{game_name}' not found. Please enter a valid game name.")
             return redirect(url_for("index"))
 
-        print(f"[+] Fetching data for app_id={app_id}")
+        print(f"[+] Using fake data for '{game_name}'")
+        print(base_features)
 
-        # === Call our existing function to get game data (parsing, price, and reviews) ===
-        df = asyncio.run(get_game_data(game_name))
+        # Prepare the fake data as DataFrame
+        X_base = pd.DataFrame([base_features])
 
-        if df.empty:
-            flash(f"No data found for '{game_name}'.")
-            return redirect(url_for("index"))
+        # Add missing features
+        missing_cols = [col for col in xgb_model_features if col not in X_base.columns]
+        for c in missing_cols:
+            X_base[c] = 0
+        X_base = X_base[xgb_model_features]
 
-        # === Prepare features ===
-        X_base = df  # Use the already prepared DataFrame as is (no further manipulation)
-
-        # === Predict 12 months ahead ===
+        # Predict for the next 12 months
         predictions = []
         current_date = datetime.now()
 
         for i in range(12):
             future_date = current_date + relativedelta(months=i)
             X = X_base.copy()
-            X["month_num"] = future_date.month
+            X["month_num"] = future_date.month  # Update month for each prediction
 
-            # Prediction using the model
+            # Predict with the same model
             pred_value = float(xgb_model.predict(X)[0])
 
             predictions.append({
                 "game": game_name,
-                "app_id": app_id,
                 "month_year": future_date.strftime("%B %Y"),
                 "price": f"{pred_value:.2f}% expected discount",
             })

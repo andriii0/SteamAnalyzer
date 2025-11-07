@@ -258,9 +258,6 @@ async def main(start: int, end: int):
     else:
         print("[!] Nothing collected!")
 
-async def get_game_data(game_name: str) -> pd.DataFrame:
-    return await process_game(game_name, None, set())
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Steam price + review history data prep")
     parser.add_argument("--start", type=int, default=0, help="Start index of games")
