@@ -47,20 +47,45 @@ PUBLISHER_NAME_MAP = {
 }
 
 
+_PUBLISHER_DELIMITERS = re.compile(r"[,/|;&]|\band\b|\+", re.IGNORECASE)
+
+
 def _extract_publisher_variants(raw_value: str) -> set[str]:
     """Return potential publisher name variants contained in the raw value."""
     if not raw_value:
         return set()
 
     normalized_spaces = str(raw_value).replace("\u00A0", " ")
-    variants = {normalized_spaces.strip()}
+    variants: set[str] = set()
 
-    for part in re.split(r"[,/|]", normalized_spaces):
+    base_variant = normalized_spaces.strip()
+    if base_variant:
+        variants.add(base_variant)
+
+    for part in _PUBLISHER_DELIMITERS.split(normalized_spaces):
         part = part.strip()
         if part:
             variants.add(part)
 
-    return {variant for variant in variants if variant}
+    return variants
+
+
+def _match_publisher_columns(raw_value: str) -> set[str]:
+    """Return publisher feature columns that correspond to the provided raw value."""
+    matches: set[str] = set()
+
+    for variant in _extract_publisher_variants(raw_value):
+        normalized_variant = _normalize_publisher_name(variant)
+        column = PUBLISHER_NAME_MAP.get(normalized_variant)
+        if column:
+            matches.add(column)
+            continue
+
+        fallback_column = PUBLISHER_PREFIX + variant.strip()
+        if fallback_column in PUBLISHER_FEATURES:
+            matches.add(fallback_column)
+
+    return matches
 
 
 def parse_month_to_datetime(s):
@@ -378,16 +403,17 @@ def _prepare_features(df: pd.DataFrame) -> pd.DataFrame:
             features_df.loc[:, feature] = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
 
     if "publisher" in df.columns:
-        for idx, publisher_value in df["publisher"].fillna("").items():
-            matched_columns: set[str] = set()
-            for variant in _extract_publisher_variants(publisher_value):
-                normalized_variant = _normalize_publisher_name(variant)
-                column = PUBLISHER_NAME_MAP.get(normalized_variant)
-                if column:
-                    matched_columns.add(column)
-
+        publisher_series = df["publisher"].fillna("").astype(str)
+        for idx, publisher_value in publisher_series.items():
+            matched_columns = _match_publisher_columns(publisher_value)
             for column in matched_columns:
                 features_df.at[idx, column] = 1.0
+
+            if publisher_value and not matched_columns:
+                normalized = _normalize_publisher_name(publisher_value)
+                print(
+                    f"[!] Publisher '{publisher_value}' (normalized '{normalized}') was not found in model features",
+                )
 
     return features_df
 
