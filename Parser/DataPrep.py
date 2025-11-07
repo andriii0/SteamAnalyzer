@@ -420,7 +420,14 @@ def _prepare_features(df: pd.DataFrame) -> pd.DataFrame:
 
 async def get_game_data(game_name: str) -> pd.DataFrame:
     df = await process_game(game_name, None, set())
-    return _prepare_features(df)
+    prepared_df = _prepare_features(df)
+    if not prepared_df.empty:
+        csv_output = prepared_df.to_csv(index=False)
+        print("[INFO] Prepared feature frame (CSV):\n" + csv_output)
+    else:
+        print("[INFO] Prepared feature frame is empty.")
+
+    return prepared_df
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Steam price + review history data prep")
