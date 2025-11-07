@@ -1,6 +1,7 @@
 import asyncio
 import pandas as pd
 import argparse
+import pickle
 import re
 from pathlib import Path
 
@@ -15,6 +16,51 @@ from Parser.gameIdSearcher import GameIdSearch
 INPUT_FILE = Path("../data/steam_sales.csv")
 OUTPUT_FILE = Path("../data/steam_prices_prepared.csv")
 LOG_FILE = Path("scraper_log.txt")
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+FEATURES_PATH = BASE_DIR / "xgbModel6500rows" / "xgb_features.pkl"
+
+try:
+    with FEATURES_PATH.open("rb") as f:
+        MODEL_FEATURES: list[str] = pickle.load(f)
+except FileNotFoundError:
+    MODEL_FEATURES = []
+
+PUBLISHER_PREFIX = "publisher_"
+BASE_FEATURES = [
+    feature for feature in MODEL_FEATURES if not feature.startswith(PUBLISHER_PREFIX)
+]
+PUBLISHER_FEATURES = [
+    feature for feature in MODEL_FEATURES if feature.startswith(PUBLISHER_PREFIX)
+]
+
+
+def _normalize_publisher_name(name: str) -> str:
+    """Normalize publisher names for consistent lookups."""
+    name = re.sub(r"[\u00A0\s]+", " ", str(name)).strip().lower()
+    return name
+
+
+PUBLISHER_NAME_MAP = {
+    _normalize_publisher_name(feature[len(PUBLISHER_PREFIX) :]): feature
+    for feature in PUBLISHER_FEATURES
+}
+
+
+def _extract_publisher_variants(raw_value: str) -> set[str]:
+    """Return potential publisher name variants contained in the raw value."""
+    if not raw_value:
+        return set()
+
+    normalized_spaces = str(raw_value).replace("\u00A0", " ")
+    variants = {normalized_spaces.strip()}
+
+    for part in re.split(r"[,/|]", normalized_spaces):
+        part = part.strip()
+        if part:
+            variants.add(part)
+
+    return {variant for variant in variants if variant}
 
 
 def parse_month_to_datetime(s):
@@ -258,8 +304,97 @@ async def main(start: int, end: int):
     else:
         print("[!] Nothing collected!")
 
+def _clean_numeric(series: pd.Series) -> pd.Series:
+    """Convert a string/number series to numeric values, stripping common artifacts."""
+    return pd.to_numeric(
+        series.astype(str).str.replace(r"[^0-9+\-.]", "", regex=True),
+        errors="coerce",
+    )
+
+
+def _prepare_features(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    if not MODEL_FEATURES:
+        raise RuntimeError(
+            f"Model features list is empty. Ensure '{FEATURES_PATH}' is available."
+        )
+
+    df = df.copy()
+
+    # --- Ensure datetime columns ---
+    if "release_date" in df.columns:
+        df["release_date"] = pd.to_datetime(df["release_date"], errors="coerce")
+    else:
+        df["release_date"] = pd.NaT
+
+    if "month" in df.columns:
+        df["month"] = pd.to_datetime(df["month"], errors="coerce")
+    else:
+        df["month"] = pd.NaT
+
+    df["days_since_release"] = (df["month"] - df["release_date"]).dt.days
+    df["month_num"] = df["month"].dt.month
+
+    # --- Numeric conversions ---
+    for col in [
+        "base_price",
+        "lowest_price",
+        "price_changes",
+        "days_on_sale",
+        "positive",
+        "negative",
+        "total_reviews",
+    ]:
+        if col in df.columns:
+            df[col] = _clean_numeric(df[col])
+
+    if "review_change_percent" in df.columns:
+        df["review_change_percent"] = _clean_numeric(df["review_change_percent"])
+    else:
+        df["review_change_percent"] = 0
+
+    # --- Derived ratios ---
+    if {"positive", "total_reviews"}.issubset(df.columns):
+        total = df["total_reviews"].replace({0: pd.NA})
+        df["positive_ratio"] = df["positive"].divide(total).fillna(0)
+    else:
+        df["positive_ratio"] = 0
+
+    if {"negative", "total_reviews"}.issubset(df.columns):
+        total = df["total_reviews"].replace({0: pd.NA})
+        df["negative_ratio"] = df["negative"].divide(total).fillna(0)
+    else:
+        df["negative_ratio"] = 0
+
+    df["days_since_release"] = pd.to_numeric(df["days_since_release"], errors="coerce")
+    df["month_num"] = pd.to_numeric(df["month_num"], errors="coerce")
+
+    features_df = pd.DataFrame(0.0, index=df.index, columns=MODEL_FEATURES)
+
+    for feature in BASE_FEATURES:
+        if feature in df.columns:
+            features_df.loc[:, feature] = pd.to_numeric(df[feature], errors="coerce").fillna(0.0)
+
+    if "publisher" in df.columns:
+        for idx, publisher_value in df["publisher"].fillna("").items():
+            matched_columns: set[str] = set()
+            for variant in _extract_publisher_variants(publisher_value):
+                normalized_variant = _normalize_publisher_name(variant)
+                column = PUBLISHER_NAME_MAP.get(normalized_variant)
+                if column:
+                    matched_columns.add(column)
+
+            for column in matched_columns:
+                features_df.at[idx, column] = 1.0
+
+    return features_df
+
+
 async def get_game_data(game_name: str) -> pd.DataFrame:
-    return await process_game(game_name, None, set())
+    df = await process_game(game_name, None, set())
+    return _prepare_features(df)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Steam price + review history data prep")
