@@ -1,8 +1,11 @@
 import asyncio
-import pandas as pd
 import argparse
 import re
+from functools import lru_cache
 from pathlib import Path
+
+import joblib
+import pandas as pd
 
 from Parser.priceHistoryScraper import PriceHistoryScraper
 from Parser.reviewHistoryScraper import ReviewHistoryScraper
@@ -15,6 +18,19 @@ from Parser.gameIdSearcher import GameIdSearch
 INPUT_FILE = Path("../data/steam_sales.csv")
 OUTPUT_FILE = Path("../data/steam_prices_prepared.csv")
 LOG_FILE = Path("scraper_log.txt")
+FEATURES_FILE = Path(__file__).resolve().parent.parent / "xgbModel6500rows" / "xgb_features.pkl"
+
+
+@lru_cache(maxsize=1)
+def _load_model_features() -> list[str]:
+    if not FEATURES_FILE.exists():
+        raise FileNotFoundError(f"Model features file not found: {FEATURES_FILE}")
+
+    features = joblib.load(FEATURES_FILE)
+    if not isinstance(features, (list, tuple)):
+        raise ValueError("Model features file must contain a sequence of feature names.")
+
+    return list(features)
 
 
 def parse_month_to_datetime(s):
@@ -259,7 +275,92 @@ async def main(start: int, end: int):
         print("[!] Nothing collected!")
 
 async def get_game_data(game_name: str) -> pd.DataFrame:
-    return await process_game(game_name, None, set())
+    df = await process_game(game_name, None, set())
+
+    if df.empty:
+        return df
+
+    df = df.copy()
+
+    df["release_date"] = pd.to_datetime(df.get("release_date"), errors="coerce")
+    df["month"] = pd.to_datetime(df.get("month"), errors="coerce")
+    df = df[df["month"].notna()].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.sort_values("month", ascending=False).head(1).copy()
+
+    numeric_columns = [
+        "days_on_sale",
+        "price_changes",
+        "base_price",
+        "total_reviews",
+    ]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    if "positive" in df.columns:
+        df["positive"] = pd.to_numeric(df["positive"], errors="coerce").fillna(0)
+    if "negative" in df.columns:
+        df["negative"] = pd.to_numeric(df["negative"], errors="coerce").fillna(0)
+
+    if "review_change_percent" in df.columns:
+        df["review_change_percent"] = (
+            df["review_change_percent"].astype(str)
+            .str.replace("-", "0")
+            .str.replace("%", "", regex=False)
+        )
+        df["review_change_percent"] = pd.to_numeric(
+            df["review_change_percent"], errors="coerce"
+        ).fillna(0)
+
+    df["days_since_release"] = (
+        df["month"] - df["release_date"]
+    ).dt.days.fillna(0).astype(int)
+
+    if "total_reviews" in df.columns:
+        denominator = df["total_reviews"].replace({0: pd.NA})
+        positives = df["positive"] if "positive" in df.columns else pd.Series(0, index=df.index)
+        negatives = df["negative"] if "negative" in df.columns else pd.Series(0, index=df.index)
+        df["positive_ratio"] = positives.div(denominator).fillna(0)
+        df["negative_ratio"] = negatives.div(denominator).fillna(0)
+    else:
+        df["positive_ratio"] = 0
+        df["negative_ratio"] = 0
+
+    df["month_num"] = df["month"].dt.month.fillna(0).astype(int)
+
+    feature_names = _load_model_features()
+    publisher_columns = [name for name in feature_names if name.startswith("publisher_")]
+
+    for col in publisher_columns:
+        df[col] = 0.0
+
+    if "publisher" in df.columns:
+        for idx, raw_value in df["publisher"].fillna("").items():
+            publisher_value = raw_value.strip()
+            if not publisher_value:
+                continue
+
+            column_name = f"publisher_{publisher_value}"
+            if column_name in publisher_columns:
+                df.at[idx, column_name] = 1.0
+                continue
+
+            for part in re.split(r",\s*", publisher_value):
+                part_column = f"publisher_{part.strip()}"
+                if part.strip() and part_column in publisher_columns:
+                    df.at[idx, part_column] = 1.0
+
+    result = pd.DataFrame(index=df.index)
+    for name in feature_names:
+        if name in df.columns:
+            result[name] = df[name]
+        else:
+            result[name] = 0.0
+
+    return result[feature_names]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Steam price + review history data prep")
