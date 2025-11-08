@@ -4,8 +4,6 @@ import argparse
 import re
 from pathlib import Path
 
-from Parser.priceHistoryScraper import PriceHistoryScraper
-from Parser.reviewHistoryScraper import ReviewHistoryScraper
 from priceHistoryScraper import PriceHistoryScraper
 from reviewHistoryScraper import ReviewHistoryScraper
 from gameIdSearcher import GameIdSearch
