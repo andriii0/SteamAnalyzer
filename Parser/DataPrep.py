@@ -6,11 +6,9 @@ from pathlib import Path
 
 from Parser.priceHistoryScraper import PriceHistoryScraper
 from Parser.reviewHistoryScraper import ReviewHistoryScraper
-from Parser.gameIdSearcher import GameIdSearch
-
-#from priceHistoryScraper import PriceHistoryScraper
-#from reviewHistoryScraper import ReviewHistoryScraper
-#from gameIdSearcher import GameIdSearch
+from priceHistoryScraper import PriceHistoryScraper
+from reviewHistoryScraper import ReviewHistoryScraper
+from gameIdSearcher import GameIdSearch
 
 INPUT_FILE = Path("../data/steam_sales.csv")
 OUTPUT_FILE = Path("../data/steam_prices_prepared.csv")
