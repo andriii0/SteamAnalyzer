@@ -5,19 +5,20 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from dateutil.relativedelta import relativedelta
 
+RUN_MODE = "both"   # "percentage" or "both"
+
+
 MODEL_PATH = "xgbModel6500rows/xgb_date_model.pkl"
 DISCOUNT_MODEL_PATH = "xgbModel6500rows/xgb_discount_model.pkl"
 FEATURES_PATH = "xgbModel6500rows/xgb_date_features.pkl"
 DISCOUNT_FEATURES_PATH = "xgbModel6500rows/xgb_discount_features.pkl"
 
-# Загрузка моделей и признаков
 xgb_date_model = joblib.load(MODEL_PATH)
 xgb_discount_model = joblib.load(DISCOUNT_MODEL_PATH)
 
 xgb_date_features = joblib.load(FEATURES_PATH)
 xgb_discount_features = joblib.load(DISCOUNT_FEATURES_PATH)
 
-# Загрузка тестового датасета
 df = pd.read_csv("data/test_dataset.csv", parse_dates=["month", "release_date"])
 
 
@@ -117,28 +118,144 @@ def percentage_model(df, model):
 
     return results_df
 
-def date_model (df, model):
-    # Creating a new column for time of discount
-    df['discount_occurred'] = (df['lowest_price'] < df['base_price']).astype(int)
+def date_model(df, model):
+    df = df.copy()
+
+    # Basic cleanup
+    df = df[df["base_price"] > 0]
+    df = df[df["lowest_price"] > 0]
+    df = df[df["lowest_price"] <= df["base_price"]]
+
+    df["discount_occurred"] = (df["lowest_price"] < df["base_price"]).astype(int)
     df["days_since_release"] = (df["month"] - df["release_date"]).dt.days
+    df["positive_ratio"] = df["positive"] / df["total_reviews"]
+    df["negative_ratio"] = df["negative"] / df["total_reviews"]
+
+    df["review_change_percent"] = (
+        df["review_change_percent"]
+        .astype(str)
+        .str.replace("%", "", regex=False)
+        .str.replace("+", "", regex=False)
+        .str.replace("-", "0", regex=False)
+        .astype(float)
+    )
+
     df["month_num"] = df["month"].dt.month
-    df['publisher'] = df['publisher'].astype('category').cat.codes
-    features = [
-        'price_changes', 'base_price', 'days_since_release',
-        'month_num', 'publisher'
-    ]
+    df["publisher"] = df["publisher"].astype("category").cat.codes
+
+    df = df.drop_duplicates().reset_index(drop=True)
+
+    # ======== FIX: auto-fill full feature set ========
+    base_row = {}
+
+    for col in xgb_date_features:
+        if col in df.columns:
+            # use first known value
+            base_row[col] = df[col].iloc[0]
+        else:
+            # fallback value for missing features
+            base_row[col] = 0
+    # ==================================================
+
+    current_date = df["month"].max()
+    future_months = [current_date + relativedelta(months=i) for i in range(1, 13)]
+
+    results = []
+
+    for future_date in future_months:
+        row = base_row.copy()
+
+        # update dynamic fields
+        row["days_since_release"] = (future_date - df["release_date"].iloc[0]).days
+        row["month_num"] = future_date.month
+
+        future_df = pd.DataFrame([row])[xgb_date_features]
+
+        pred_class = model.predict(future_df)[0]
+        pred_proba = model.predict_proba(future_df)[0][1]
+
+        results.append({
+            "month": future_date.strftime("%B %Y"),
+            "predicted_discount_occurred": int(pred_class),
+            "probability_discount": float(pred_proba)
+        })
+
+    results_df = pd.DataFrame(results)
+    print(results_df)
+
+    return results_df
+
+def combine_predictions(percentage_df, date_df):
+    merged = pd.merge(
+        date_df,
+        percentage_df,
+        on="month",
+        how="inner"
+    )
+    return merged
+
+def print_combined_readable(df):
+    print("\n✅ Final predictions (combined per month):\n")
+    for _, row in df.iterrows():
+        month = row["month"]
+        occurred = "YES" if row["predicted_discount_occurred"] == 1 else "NO"
+        prob = f"{row['probability_discount']:.4f}"
+        percent = f"{row['predicted_discount_percentage']:.2f}%"
+
+        print(f"{month}:   discount = {occurred} (p={prob}),   predicted percent = {percent}")
+
 
 # --- Main execution starts here ---
 if __name__ == "__main__":
-    # Running the model on the test dataset for the next 12 months
-    print("Running discount prediction for the next 12 months...\n")
 
-    # Run the percentage model
-    results_df = percentage_model(df, xgb_discount_model)
+    RUN_MODE = "both"   # варианты: "percentage" или "both"
 
-    # Plotting the results for visualization
-    plt.figure(figsize=(10, 6))
-    sns.lineplot(data=results_df, x="month", y="predicted_discount_percentage", marker='o')
-    plt.title("Predicted Discount Percentage Over Time for Cyberpunk 2077")
-    plt.xlabel("Month")
-    plt.ylabel("Predicted Discount Percentage")
+    print("\n=== Running Steam discount prediction ===\n")
+
+    # ---------------------------------------------------------
+    # MODE 1: Run ONLY percentage model
+    # ---------------------------------------------------------
+    if RUN_MODE == "both":
+        print("-> Running DISCOUNT PERCENTAGE model...\n")
+        percentage_results = percentage_model(df, xgb_discount_model)
+
+        print("\n-> Running DISCOUNT OCCURRENCE model...\n")
+        date_results = date_model(df, xgb_date_model)
+
+        # ✅ NEW: combine both predictions
+        combined_results = combine_predictions(percentage_results, date_results)
+
+        # ✅ NEW: readable combined output
+        print_combined_readable(combined_results)
+
+        # Plot graphs
+        plt.figure(figsize=(10, 6))
+        sns.lineplot(
+            data=percentage_results,
+            x="month",
+            y="predicted_discount_percentage",
+            marker='o'
+        )
+        plt.title("Predicted Discount Percentage Over Next 12 Months")
+        plt.xlabel("Month")
+        plt.ylabel("Predicted Discount Percentage")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.show()
+
+        plt.figure(figsize=(10, 6))
+        sns.lineplot(
+            data=date_results,
+            x="month",
+            y="probability_discount",
+            marker='o'
+        )
+        plt.title("Predicted Probability of Discount Occurrence Over Next 12 Months")
+        plt.xlabel("Month")
+        plt.ylabel("Probability of Discount")
+        plt.xticks(rotation=45)
+        plt.ylim(0, 1)
+        plt.tight_layout()
+        plt.show()
+
+        print("\n=== Completed (both models) ===")
