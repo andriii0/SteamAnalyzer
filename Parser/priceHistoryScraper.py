@@ -123,9 +123,8 @@ class PriceHistoryScraper:
         Return as a string in 'YYYY-MM-DD' format.
         """
         try:
-            # Парсим дату в формате MM/DD/YYYY
             release_date = datetime.strptime(release_date_str.strip(), "%m/%d/%Y")
-            return release_date.date()  # возвращаем только дату (YYYY-MM-DD)
+            return release_date.date()
         except ValueError:
             print(f"Error parsing release date: {release_date_str}")
             return None
